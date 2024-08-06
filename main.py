@@ -53,42 +53,64 @@ def update_personality(personality, trait, change):
     
     return personality
 
+user_id_file = "user_id.txt"
+
 # Function to generate a unique user ID
 def generate_user_id():
-    """Generate a unique user ID using uuid4."""
     return str(uuid.uuid4())
 
-# Function to load user profile based on user ID
-def load_user_profile(user_id=None, filename="nyra_user_profiles.json"):
-    """
-    Load the user profile based on user ID.
-    If user_id is None, generate a new ID and create a new profile.
-    """
-    try:
-        with open(filename, "r") as f:
-            profiles = json.load(f)
-    except FileNotFoundError:
-        profiles = {}
+# Function to save user ID to a file
+def save_user_id(user_id, filename=user_id_file):
+    with open(filename, "w") as f:
+        f.write(user_id)
 
-    if user_id is None:
-        # Generate a new user ID if not provided
+# Function to load user ID from a file
+def load_user_id(filename=user_id_file):
+    if os.path.exists(filename):
+        with open(filename, "r") as f:
+            return f.read().strip()
+    return None
+
+# Function to load user profile based on user ID
+def load_user_profile(user_id=None, profile_filename="nyra_user_profiles.json"):
+    profiles = {}
+    
+    # Check if the profile file exists, if so, load it
+    if os.path.exists(profile_filename):
+        with open(profile_filename, "r") as f:
+            profiles = json.load(f)
+    
+    if user_id is None or user_id not in profiles:
+        # Generate a new user ID if not provided or not found in existing profiles
         user_id = generate_user_id()
-        # Ask the user for their name
+        # Ask the user for their name only when creating a new profile
         user_name = input("Nyra: Hi there! What should I call you? ")
         # Create a new user profile with Nyra's initial personality preferences and user name
         profiles[user_id] = {
             "name": user_name,
-            "preferences": personality,  # Use the initial personality defined above
+            "preferences": personality,
             "history": []
         }
-        save_user_profile(user_id, profiles[user_id], filename)
+        save_user_profile(user_id, profiles[user_id], profile_filename)
+        # Save the generated user ID to a file
+        save_user_id(user_id)
     
-    return profiles.get(user_id, {"name": "User", "preferences": personality, "history": []}), user_id
+    return profiles.get(user_id), user_id
+
 
 # Function to save user profile based on user ID
 def save_user_profile(user_id, profile, filename="nyra_user_profiles.json"):
-    profiles, _ = load_user_profile(filename=filename)
+    profiles = {}
+    
+    # Load existing profiles if the file exists
+    if os.path.exists(filename):
+        with open(filename, "r") as f:
+            profiles = json.load(f)
+    
+    # Update the specific user profile
     profiles[user_id] = profile
+    
+    # Write back the profiles to the JSON file
     with open(filename, "w") as f:
         json.dump(profiles, f, indent=4)
 
@@ -112,7 +134,7 @@ def add_memory(memory, interaction, memory_type="short-term"):
     save_memory(memory)
 
 def manage_memory(memory, interaction):
-    print("Manage_memory called")
+
     if should_store_long_term(interaction["user_input"]):
         memory["long-term"].append(interaction)
         save_memory(memory["long-term"], filename="nyra_memory_long_term.json")
@@ -169,7 +191,6 @@ def should_store_long_term(user_input):
     return False
 
 def prioritize_memory(memory, limit=100):
-    print("prioritize_memory called")
     valid_memory = [m for m in memory if isinstance(m, dict)]
     prioritized_memory = sorted(valid_memory, key=lambda x: x.get("sentiment", "neutral"), reverse=True)
     if len(prioritized_memory) > limit:
@@ -184,7 +205,7 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 def generate_response(prompt, personality_traits):
     personality_description = ", ".join([f"{trait}: {level}" for trait, level in personality_traits.items()])
     system_prompt = f"You are Nyra, a chatbot with the following personality traits: {personality_description}. Respond accordingly."
-    response = openai.ChatCompletion.create(
+    response = openai.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
             {"role": "system", "content": system_prompt},
@@ -197,23 +218,29 @@ def generate_response(prompt, personality_traits):
     )
     return response.choices[0].message.content
 
-def chat_with_nyra(user_id=None):
+def chat_with_nyra():
+    user_id = load_user_id()
     user_profile, user_id = load_user_profile(user_id)
+    
     memory = {
         "short-term": load_memory(filename="nyra_memory_short_term.json"),
         "long-term": load_memory(filename="nyra_memory_long_term.json")
     }
     print(f"Nyra: Hi, {user_profile['name']}! What can I help with today?")
+    
     while True:
         user_input = input(f"{user_profile['name']}: ")
         if user_input.lower() in ["exit", "quit", "bye"]:
             print(f"Nyra: Goodbye, {user_profile['name']}! Have a great day!")
             break
+
         memory_context = recall_relevant_memory(memory["short-term"], user_input) \
                          or recall_relevant_memory(memory["long-term"], user_input)
         prompt = f"{memory_context} Current conversation: {user_input}"
+
         nyra_response = generate_response(prompt, user_profile["preferences"])
         print(f"Nyra: {nyra_response}")
+
         manage_memory(memory, {"user_input": user_input, "nyra_response": nyra_response})
         user_profile["history"].append({"input": user_input, "response": nyra_response})
         save_user_profile(user_id, user_profile)
