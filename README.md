@@ -1,4 +1,4 @@
-### Nyra Chatbot
+# Nyra Chatbot
 
 Nyra is an intelligent chatbot designed to interact with users in a personalized manner, providing engaging conversations and maintaining memory across sessions. Nyra learns from each interaction, storing relevant information to enhance future conversations, and adapts its responses based on a dynamic personality profile. This chatbot is built using Python, OpenAI's GPT models, and various natural language processing (NLP) techniques.
 
