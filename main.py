@@ -57,20 +57,16 @@ def update_personality(personality, trait, change):
 # save_personality(updated_personality)
 # print(updated_personality)
 
-# Memory file
-memory_file = "nyra_memory.json"
-
 # Function to load memory
-def load_memory(filename=memory_file):
+def load_memory(filename):
     try:
         with open(filename, "r") as f:
             return json.load(f)
     except FileNotFoundError:
-        # Return a dictionary with 'short-term','long-term' keys, each initialized to an empty list
-        return {"short-term": [], "long-term": [], "sentiment": [], "keywords": [], "category": []}
+        return [] 
 
 # Function to save memory
-def save_memory(memory, filename=memory_file):
+def save_memory(memory, filename):
     with open(filename, "w") as f:
         json.dump(memory, f)
 
@@ -91,7 +87,6 @@ def add_memory(memory, interaction, memory_type="short-term"):
 
 
 def manage_memory(memory, interaction):
-    print("Manage_memory called")
     """
     Add the interaction to short-term or long-term memory based on its importance.
     
@@ -99,9 +94,12 @@ def manage_memory(memory, interaction):
     :param interaction: The interaction to be added to memory.
     """
     if should_store_long_term(interaction["user_input"]):
-        add_memory(memory, interaction, memory_type="long-term")
+        memory["long-term"].append(interaction)
+        save_memory(memory["long-term"], filename="nyra_memory_long_term.json")
     else:
-        add_memory(memory, interaction, memory_type="short-term")
+        memory["short-term"].append(interaction)
+        memory["short-term"] = prioritize_memory(memory["short-term"])
+        save_memory(memory["short-term"], filename="nyra_memory_short_term.json")
     
     # Prioritize and save memories
     memory["short-term"] = prioritize_memory(memory["short-term"])
@@ -112,33 +110,42 @@ def extract_keywords(text):
     # Simple keyword extraction, can be expanded with NLP libraries like spaCy
     return text.lower().split()
 
+nlp = spacy.load("en_core_web_sm")
+
 def categorize_topics(text):
-    # Simple topic categorization, can be expanded with more complex models (spaCy here)
-    if "space" in text.lower():
-        return ["astronomy", "science"]
-    elif "emotion" in text.lower():
-        return ["psychology", "well-being"]
-    return ["general"]
+    """
+    Categorize topics using spaCy for Named Entity Recognition (NER).
+    
+    :param text: The text to analyze.
+    :return: List of identified topics.
+    """
+    doc = nlp(text)
+    topics = []
+    
+    for ent in doc.ents:
+        if ent.label_ in ["ORG", "GPE", "PERSON", "NORP", "FAC", "LOC", "PRODUCT"]:
+            topics.append(ent.text)
+    
+    return topics if topics else ["general"]
 
 def analyze_sentiment(text):
-    # Placeholder for sentiment analysis
-    if any(word in text.lower() for word in ["happy", "joy", "great"]):
+    """
+    Analyze sentiment using TextBlob.
+    
+    :param text: The text to analyze.
+    :return: Sentiment category ('positive', 'neutral', 'negative').
+    """
+    blob = TextBlob(text)
+    polarity = blob.sentiment.polarity
+    
+    if polarity > 0.1:
         return "positive"
-    elif any(word in text.lower() for word in ["sad", "angry", "bad"]):
+    elif polarity < -0.1:
         return "negative"
-    return "neutral"
+    else:
+        return "neutral"
 
-# Example usage with enhanced memory
-current_memory = load_memory()
-new_interaction = {
-    "user_input": "I'm feeling great about space exploration!",
-    "nyra_response": "That's awesome! Space exploration is full of wonders.",
-    "sentiment": analyze_sentiment(current_memory),
-    "keywords": extract_keywords(current_memory),
-    "category": categorize_topics(current_memory)
-}
-add_memory(current_memory, new_interaction)
-print(current_memory)
+
 
 def recall_relevant_memory(memory_segment, current_input):
     """
@@ -166,17 +173,14 @@ def recall_relevant_memory(memory_segment, current_input):
     return ""
 
 # Example usage
-current_memory = load_memory()
-memory_context = recall_relevant_memory(current_memory["short-term"], "space exploration")
-print(memory_context)
+# current_memory = load_memory()
+# memory_context = recall_relevant_memory(current_memory["short-term"], "space exploration")
+# print(memory_context)
 
-add_memory(current_memory, new_interaction, memory_type="short-term")
-print(current_memory)
+# add_memory(current_memory, new_interaction, memory_type="short-term")
+# print(current_memory)
 
 # Testing the recall function
-
-memory_context = recall_relevant_memory(current_memory["short-term"], "space exploration")
-print(memory_context)
 
 # Function to decide if an interaction should be stored long-term
 def should_store_long_term(user_input):
@@ -186,7 +190,6 @@ def should_store_long_term(user_input):
     return False
 
 def prioritize_memory(memory, limit=100):
-    print("prioritize_memory called")
     """
     Prioritize memory by importance and relevance, discarding the least important if memory exceeds a limit.
     
@@ -205,46 +208,6 @@ def prioritize_memory(memory, limit=100):
         return prioritized_memory[:limit]
     
     return prioritized_memory
-
-# Example usage of prioritizing memory
-current_memory = load_memory()
-current_memory["short-term"] = prioritize_memory(current_memory["short-term"])
-
-
-def analyze_sentiment(text):
-    """
-    Analyze sentiment using TextBlob.
-    
-    :param text: The text to analyze.
-    :return: Sentiment category ('positive', 'neutral', 'negative').
-    """
-    blob = TextBlob(text)
-    polarity = blob.sentiment.polarity
-    
-    if polarity > 0.1:
-        return "positive"
-    elif polarity < -0.1:
-        return "negative"
-    else:
-        return "neutral"
-
-nlp = spacy.load("en_core_web_sm")
-
-def categorize_topics(text):
-    """
-    Categorize topics using spaCy for Named Entity Recognition (NER).
-    
-    :param text: The text to analyze.
-    :return: List of identified topics.
-    """
-    doc = nlp(text)
-    topics = []
-    
-    for ent in doc.ents:
-        if ent.label_ in ["ORG", "GPE", "PERSON", "NORP", "FAC", "LOC", "PRODUCT"]:
-            topics.append(ent.text)
-    
-    return topics if topics else ["general"]
 
 # Initialize OpenAI API with your key
 load_dotenv()
@@ -276,7 +239,9 @@ def generate_response(prompt, personality_traits):
     # Create a system prompt that incorporates personality dimensions
     personality_description = ", ".join([f"{trait}: {level}" for trait, level in personality_traits.items()])
     system_prompt = f"You are Nyra, a chatbot with the following personality traits: {personality_description}. Respond accordingly."
-    
+
+    print(personality_description)
+
     response = openai.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
@@ -300,7 +265,7 @@ def chat_with_nyra(user_id="default_user"):
         "long-term": load_memory(filename="nyra_memory_long_term.json")
     }
     
-    print("Nyra: Hi, I'm Nyra! How can I assist you today?")
+    print("Nyra: Hi, I'm Nyra! What can I help with?")
     
     while True:
         user_input = input("You: ")
