@@ -127,14 +127,26 @@ def save_memory(memory, filename):
         json.dump(memory, f)
 
 def add_memory(memory, interaction, memory_type="short-term"):
+
+    # Extract keywords, sentiment, and category
+    interaction["keywords"] = extract_keywords(interaction["user_input"])
+    interaction["sentiment"] = analyze_sentiment(interaction["user_input"])
+    interaction["category"] = categorize_topics(interaction["user_input"])
+    
     if memory_type in memory and isinstance(memory[memory_type], list):
         memory[memory_type].append(interaction)
     else:
         print("Error: Invalid memory type or structure")
+    
     save_memory(memory)
 
 def manage_memory(memory, interaction):
 
+    # Extract and store metadata before saving to memory
+    interaction["keywords"] = extract_keywords(interaction["user_input"])
+    interaction["sentiment"] = analyze_sentiment(interaction["user_input"])
+    interaction["category"] = categorize_topics(interaction["user_input"])
+    
     if should_store_long_term(interaction["user_input"]):
         memory["long-term"].append(interaction)
         save_memory(memory["long-term"], filename="nyra_memory_long_term.json")
@@ -145,37 +157,81 @@ def manage_memory(memory, interaction):
 
 # Keyword and sentiment analysis
 def extract_keywords(text):
-    return text.lower().split()
+    doc = nlp(text)
+    keywords = [token.lemma_ for token in doc if token.is_alpha and not token.is_stop]
+    return keywords
 
 nlp = spacy.load("en_core_web_sm")
 
 def categorize_topics(text):
     doc = nlp(text)
     topics = []
+
+    # Extract named entities as topics
     for ent in doc.ents:
-        if ent.label_ in ["ORG", "GPE", "PERSON", "NORP", "FAC", "LOC", "PRODUCT"]:
+        if ent.label_ in ["ORG", "GPE", "PERSON", "NORP", "FAC", "LOC", "PRODUCT", "EVENT", "WORK_OF_ART", "LAW", "LANGUAGE"]:
             topics.append(ent.text)
-    return topics if topics else ["general"]
+
+    # Keyword-based topic categorization
+    keywords = {
+        "technology": ["tech", "software", "hardware", "AI", "machine learning", "robotics"],
+        "health": ["medicine", "health", "disease", "treatment", "doctor", "hospital"],
+        "finance": ["money", "finance", "investment", "stocks", "bank", "cryptocurrency"],
+        "education": ["school", "university", "education", "learning", "teaching"],
+        "sports": ["sports", "soccer", "basketball", "baseball", "tennis", "athlete"],
+        "entertainment": ["movie", "music", "concert", "celebrity", "TV show", "game"],
+        "politics": ["politics", "election", "government", "law", "policy", "senate"],
+        "science": ["science", "research", "experiment", "biology", "chemistry", "physics"],
+        "space": ["space", "planet", "galaxy", "NASA", "astronomy", "cosmos"],
+    }
+
+    for category, words in keywords.items():
+        if any(word in text.lower() for word in words):
+            topics.append(category)
+
+    # Extract noun chunks as potential topics
+    for chunk in doc.noun_chunks:
+        topics.append(chunk.text)
+
+    # Remove duplicates and return topics
+    unique_topics = list(set(topics))
+
+    return unique_topics if unique_topics else ["general"]
 
 def analyze_sentiment(text):
+    # Initialize TextBlob object
     blob = TextBlob(text)
     polarity = blob.sentiment.polarity
-    if polarity > 0.1:
+    
+    # Define thresholds for nuanced sentiment analysis
+    if polarity > 0.5:
+        return "very positive"
+    elif 0.2 < polarity <= 0.5:
         return "positive"
-    elif polarity < -0.1:
+    elif 0.1 < polarity <= 0.2:
+        return "slightly positive"
+    elif -0.1 <= polarity <= 0.1:
+        return "neutral"
+    elif -0.2 <= polarity < -0.1:
+        return "slightly negative"
+    elif -0.5 <= polarity < -0.2:
         return "negative"
     else:
-        return "neutral"
+        return "very negative"
 
 # Function to recall relevant memory based on current input
 def recall_relevant_memory(memory_segment, current_input):
     relevant_memories = []
     keywords = extract_keywords(current_input)
+
+    print(f"DEBUG: Extracted keywords: {keywords}")  # Debugging statement
+
     for interaction in memory_segment:
         if isinstance(interaction, dict):  # Check if interaction is a dictionary
             interaction_keywords = interaction.get("keywords", [])
             if any(keyword in interaction_keywords for keyword in keywords):
                 relevant_memories.append(interaction)
+                print(f"DEBUG: Relevant memory found: {interaction}")  # Debugging statement
         else:
             print(f"Warning: Encountered a non-dictionary interaction: {interaction}")
     
@@ -186,16 +242,80 @@ def recall_relevant_memory(memory_segment, current_input):
 
 # Function to decide if an interaction should be stored long-term
 def should_store_long_term(user_input):
-    if "important" in user_input.lower() or analyze_sentiment(user_input) in ["positive", "negative"]:
+
+    # Analyze sentiment
+    sentiment = analyze_sentiment(user_input)
+    
+    # Keywords that may indicate the importance of the interaction
+    important_keywords = ["important", "urgent", "critical", "must remember", "don't forget", "note this"]
+    
+    # Categories that might be of long-term interest
+    important_categories = ["health", "finance", "personal information", "security", "career", "education"]
+    
+    # Check for keywords indicating importance
+    if any(keyword in user_input.lower() for keyword in important_keywords):
         return True
+    
+    # Check for strong sentiment
+    if sentiment in ["very positive", "very negative"]:
+        return True
+    
+    # Categorize the input and check if it matches any important category
+    categories = categorize_topics(user_input)
+    if any(category in important_categories for category in categories):
+        return True
+    
     return False
 
+
 def prioritize_memory(memory, limit=100):
+
+    # Ensure all items in memory are dictionaries
     valid_memory = [m for m in memory if isinstance(m, dict)]
-    prioritized_memory = sorted(valid_memory, key=lambda x: x.get("sentiment", "neutral"), reverse=True)
+    
+    # Define importance levels for nuanced sentiment analysis
+    sentiment_importance = {
+        "very positive": 3,
+        "positive": 2,
+        "slightly positive": 1,
+        "neutral": 0,
+        "slightly negative": -1,
+        "negative": -2,
+        "very negative": -3
+    }
+    
+    # Categories and keywords that should be given higher priority
+    important_categories = ["health", "finance", "personal information", "security", "career", "education"]
+    important_keywords = ["important", "urgent", "critical", "must remember", "don't forget", "note this"]
+
+    def memory_priority_score(memory_item):
+
+        score = 0
+        
+        # Sentiment-based scoring
+        score += sentiment_importance.get(memory_item.get("sentiment", "neutral"), 0)
+        
+        # Category-based scoring
+        categories = memory_item.get("category", [])
+        if any(category in important_categories for category in categories):
+            score += 2
+        
+        # Keyword-based scoring
+        if any(keyword in memory_item.get("user_input", "").lower() for keyword in important_keywords):
+            score += 2
+        
+        # Recency could be considered implicitly by the order in the list, newer items come last
+        return score
+    
+    # Prioritize memory by score and then by recency (most recent first)
+    prioritized_memory = sorted(valid_memory, key=lambda x: (memory_priority_score(x), valid_memory.index(x)), reverse=True)
+    
+    # Truncate memory if exceeding limit
     if len(prioritized_memory) > limit:
         return prioritized_memory[:limit]
+    
     return prioritized_memory
+
 
 # Initialize OpenAI API with your key
 load_dotenv()
