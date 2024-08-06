@@ -6,6 +6,11 @@ from textblob import TextBlob
 import spacy
 import uuid
 
+# Initialize OpenAI API with your key
+load_dotenv()
+
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
 # Initial personality traits
 personality = {
     "openness": "high",
@@ -224,14 +229,11 @@ def recall_relevant_memory(memory_segment, current_input):
     relevant_memories = []
     keywords = extract_keywords(current_input)
 
-    print(f"DEBUG: Extracted keywords: {keywords}")  # Debugging statement
-
     for interaction in memory_segment:
         if isinstance(interaction, dict):  # Check if interaction is a dictionary
             interaction_keywords = interaction.get("keywords", [])
             if any(keyword in interaction_keywords for keyword in keywords):
                 relevant_memories.append(interaction)
-                print(f"DEBUG: Relevant memory found: {interaction}")  # Debugging statement
         else:
             print(f"Warning: Encountered a non-dictionary interaction: {interaction}")
     
@@ -316,54 +318,91 @@ def prioritize_memory(memory, limit=100):
     
     return prioritized_memory
 
-
-# Initialize OpenAI API with your key
-load_dotenv()
-
-openai.api_key = os.getenv("OPENAI_API_KEY")
-
-def generate_response(prompt, personality_traits):
-    personality_description = ", ".join([f"{trait}: {level}" for trait, level in personality_traits.items()])
-    system_prompt = f"You are Nyra, a chatbot with the following personality traits: {personality_description}. Respond accordingly."
-    response = openai.chat.completions.create(
+class ChatBot:
+    def __init__(self, max_history=10):
+        self.conversation_history = []
+        self.max_history = max_history
+    
+    def update_conversation_history(self, user_input, nyra_response):
+        """
+        Update the conversation history with the latest interaction.
+        """
+        self.conversation_history.append({"role": "user", "content": user_input})
+        self.conversation_history.append({"role": "assistant", "content": nyra_response})
+        
+        # Truncate history if it exceeds the max history length
+        if len(self.conversation_history) > self.max_history * 2:
+            self.conversation_history = self.conversation_history[-self.max_history * 2:]
+    
+    def get_conversation_context(self):
+        """
+        Get the current conversation context as a list of messages for the chatbot prompt.
+        """
+        return self.conversation_history
+    
+    def generate_response(self, personality_traits):
+        """
+        Generate a response from Nyra based on the conversation history and personality traits.
+        """
+        # Create a system prompt that incorporates personality dimensions
+        personality_description = ", ".join([f"{trait}: {level}" for trait, level in personality_traits.items()])
+        system_prompt = {"role": "system", "content": f"You are Nyra, a chatbot with the following personality traits: {personality_description}. Respond accordingly."}
+        
+        # Prepare the prompt with conversation history
+        prompt = [system_prompt] + self.get_conversation_context()
+        
+        response = openai.chat.completions.create(
         model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt}
-        ],
+        messages=prompt,
         max_tokens=150,
         n=1,
         stop=None,
         temperature=0.7,
     )
-    return response.choices[0].message.content
+        
+        return response.choices[0].message.content
 
-def chat_with_nyra():
-    user_id = load_user_id()
+
+def chat_with_nyra(user_id=None):
+    bot = ChatBot(max_history=10)  # Initialize the bot with a max history of 10 interactions
     user_profile, user_id = load_user_profile(user_id)
     
-    memory = {
-        "short-term": load_memory(filename="nyra_memory_short_term.json"),
-        "long-term": load_memory(filename="nyra_memory_long_term.json")
-    }
+    # Load short-term and long-term memory
+    short_term_memory = load_memory("nyra_memory_short_term.json")
+    long_term_memory = load_memory("nyra_memory_long_term.json")
+    
     print(f"Nyra: Hi, {user_profile['name']}! What can I help with today?")
     
     while True:
         user_input = input(f"{user_profile['name']}: ")
+        
         if user_input.lower() in ["exit", "quit", "bye"]:
             print(f"Nyra: Goodbye, {user_profile['name']}! Have a great day!")
             break
-
-        memory_context = recall_relevant_memory(memory["short-term"], user_input) \
-                         or recall_relevant_memory(memory["long-term"], user_input)
-        prompt = f"{memory_context} Current conversation: {user_input}"
-
-        nyra_response = generate_response(prompt, user_profile["preferences"])
+        
+        # Check if there are relevant past memories in both short-term and long-term memory
+        memory_context = recall_relevant_memory(short_term_memory, user_input) \
+                         or recall_relevant_memory(long_term_memory, user_input)
+        
+        # If relevant memories are found, include them in the conversation history
+        if memory_context:
+            bot.update_conversation_history("Nyra (memory):", memory_context)
+        
+        # Generate response using the updated conversation history
+        nyra_response = bot.generate_response(user_profile["preferences"])
+        
         print(f"Nyra: {nyra_response}")
-
-        manage_memory(memory, {"user_input": user_input, "nyra_response": nyra_response})
+        
+        # Update conversation history
+        bot.update_conversation_history(user_input, nyra_response)
+        
+        # Add the interaction to the history and save it
         user_profile["history"].append({"input": user_input, "response": nyra_response})
         save_user_profile(user_id, user_profile)
+        
+        # Manage short-term and long-term memory
+        manage_memory({"short-term": short_term_memory, "long-term": long_term_memory}, {"user_input": user_input, "nyra_response": nyra_response})
+
 
 # Start chatting with the enhanced Nyra
 chat_with_nyra()
