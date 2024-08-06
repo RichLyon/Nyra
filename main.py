@@ -4,6 +4,7 @@ import os
 import json
 from textblob import TextBlob
 import spacy
+import uuid
 
 # Initial personality traits
 personality = {
@@ -52,47 +53,66 @@ def update_personality(personality, trait, change):
     
     return personality
 
-# Example: Increase empathy by 1 level
-# updated_personality = update_personality(current_personality, "empathy", 1)
-# save_personality(updated_personality)
-# print(updated_personality)
+# Function to generate a unique user ID
+def generate_user_id():
+    """Generate a unique user ID using uuid4."""
+    return str(uuid.uuid4())
 
-# Function to load memory
+# Function to load user profile based on user ID
+def load_user_profile(user_id=None, filename="nyra_user_profiles.json"):
+    """
+    Load the user profile based on user ID.
+    If user_id is None, generate a new ID and create a new profile.
+    """
+    try:
+        with open(filename, "r") as f:
+            profiles = json.load(f)
+    except FileNotFoundError:
+        profiles = {}
+
+    if user_id is None:
+        # Generate a new user ID if not provided
+        user_id = generate_user_id()
+        # Ask the user for their name
+        user_name = input("Nyra: Hi there! What should I call you? ")
+        # Create a new user profile with Nyra's initial personality preferences and user name
+        profiles[user_id] = {
+            "name": user_name,
+            "preferences": personality,  # Use the initial personality defined above
+            "history": []
+        }
+        save_user_profile(user_id, profiles[user_id], filename)
+    
+    return profiles.get(user_id, {"name": "User", "preferences": personality, "history": []}), user_id
+
+# Function to save user profile based on user ID
+def save_user_profile(user_id, profile, filename="nyra_user_profiles.json"):
+    profiles, _ = load_user_profile(filename=filename)
+    profiles[user_id] = profile
+    with open(filename, "w") as f:
+        json.dump(profiles, f, indent=4)
+
+# Memory handling functions
 def load_memory(filename):
     try:
         with open(filename, "r") as f:
             return json.load(f)
     except FileNotFoundError:
-        return [] 
+        return []  # Return an empty list if the file doesn't exist
 
-# Function to save memory
 def save_memory(memory, filename):
     with open(filename, "w") as f:
         json.dump(memory, f)
 
-# Function to add a new memory
 def add_memory(memory, interaction, memory_type="short-term"):
-    """
-    Add a new memory to Nyra's memory bank.
-    
-    :param memory: The current memory dictionary with 'short-term' and 'long-term' keys.
-    :param interaction: A dictionary containing user input, Nyra's response, and metadata.
-    :param memory_type: Which memory segment to add to ('short-term' or 'long-term').
-    """
     if memory_type in memory and isinstance(memory[memory_type], list):
         memory[memory_type].append(interaction)
     else:
         print("Error: Invalid memory type or structure")
     save_memory(memory)
 
-
 def manage_memory(memory, interaction):
-    """
-    Add the interaction to short-term or long-term memory based on its importance.
-    
-    :param memory: The current memory structure with both short-term and long-term memory.
-    :param interaction: The interaction to be added to memory.
-    """
+    print("Manage_memory called")
     if should_store_long_term(interaction["user_input"]):
         memory["long-term"].append(interaction)
         save_memory(memory["long-term"], filename="nyra_memory_long_term.json")
@@ -100,44 +120,24 @@ def manage_memory(memory, interaction):
         memory["short-term"].append(interaction)
         memory["short-term"] = prioritize_memory(memory["short-term"])
         save_memory(memory["short-term"], filename="nyra_memory_short_term.json")
-    
-    # Prioritize and save memories
-    memory["short-term"] = prioritize_memory(memory["short-term"])
-    save_memory(memory["short-term"], filename="nyra_memory_short_term.json")
-    save_memory(memory["long-term"], filename="nyra_memory_long_term.json")
 
+# Keyword and sentiment analysis
 def extract_keywords(text):
-    # Simple keyword extraction, can be expanded with NLP libraries like spaCy
     return text.lower().split()
 
 nlp = spacy.load("en_core_web_sm")
 
 def categorize_topics(text):
-    """
-    Categorize topics using spaCy for Named Entity Recognition (NER).
-    
-    :param text: The text to analyze.
-    :return: List of identified topics.
-    """
     doc = nlp(text)
     topics = []
-    
     for ent in doc.ents:
         if ent.label_ in ["ORG", "GPE", "PERSON", "NORP", "FAC", "LOC", "PRODUCT"]:
             topics.append(ent.text)
-    
     return topics if topics else ["general"]
 
 def analyze_sentiment(text):
-    """
-    Analyze sentiment using TextBlob.
-    
-    :param text: The text to analyze.
-    :return: Sentiment category ('positive', 'neutral', 'negative').
-    """
     blob = TextBlob(text)
     polarity = blob.sentiment.polarity
-    
     if polarity > 0.1:
         return "positive"
     elif polarity < -0.1:
@@ -145,19 +145,10 @@ def analyze_sentiment(text):
     else:
         return "neutral"
 
-
-
+# Function to recall relevant memory based on current input
 def recall_relevant_memory(memory_segment, current_input):
-    """
-    Recall the most relevant memory from the given memory segment based on the current user input.
-    
-    :param memory_segment: The segment of memory to search (either short-term or long-term).
-    :param current_input: The current input from the user.
-    :return: A string summarizing relevant past interactions or an empty string if none are found.
-    """
     relevant_memories = []
     keywords = extract_keywords(current_input)
-    
     for interaction in memory_segment:
         if isinstance(interaction, dict):  # Check if interaction is a dictionary
             interaction_keywords = interaction.get("keywords", [])
@@ -169,80 +160,31 @@ def recall_relevant_memory(memory_segment, current_input):
     if relevant_memories:
         return "In previous conversations, you mentioned: " + \
                "; ".join([f"{m['user_input']} ({m['sentiment']})" for m in relevant_memories])
-    
     return ""
-
-# Example usage
-# current_memory = load_memory()
-# memory_context = recall_relevant_memory(current_memory["short-term"], "space exploration")
-# print(memory_context)
-
-# add_memory(current_memory, new_interaction, memory_type="short-term")
-# print(current_memory)
-
-# Testing the recall function
 
 # Function to decide if an interaction should be stored long-term
 def should_store_long_term(user_input):
-    # Placeholder logic: store long-term if input mentions specific topics or is highly emotional
     if "important" in user_input.lower() or analyze_sentiment(user_input) in ["positive", "negative"]:
         return True
     return False
 
 def prioritize_memory(memory, limit=100):
-    """
-    Prioritize memory by importance and relevance, discarding the least important if memory exceeds a limit.
-    
-    :param memory: The current memory list.
-    :param limit: Maximum number of memories to retain.
-    :return: Optimized memory list.
-    """
-    # Ensure all items in memory are dictionaries
+    print("prioritize_memory called")
     valid_memory = [m for m in memory if isinstance(m, dict)]
-    
-    # Simple prioritization: keep recent and high-sentiment memories
     prioritized_memory = sorted(valid_memory, key=lambda x: x.get("sentiment", "neutral"), reverse=True)
-    
-    # Truncate if exceeding limit
     if len(prioritized_memory) > limit:
         return prioritized_memory[:limit]
-    
     return prioritized_memory
 
 # Initialize OpenAI API with your key
 load_dotenv()
 
-def load_user_profile(user_id, filename="nyra_user_profiles.json"):
-    try:
-        with open(filename, "r") as f:
-            profiles = json.load(f)
-            return profiles.get(user_id, {"preferences": {}, "history": []})
-    except FileNotFoundError:
-        return {"preferences": {}, "history": []}
-
-def save_user_profile(user_id, profile, filename="nyra_user_profiles.json"):
-    profiles = load_user_profile(None, filename)
-    profiles[user_id] = profile
-    with open(filename, "w") as f:
-        json.dump(profiles, f)
-
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 def generate_response(prompt, personality_traits):
-    """
-    Generate a response from Nyra based on the given prompt and personality traits.
-    
-    :param prompt: The user's input prompt.
-    :param personality_traits: A dictionary of Nyra's personality traits.
-    :return: The response generated by GPT-4o mini.
-    """
-    # Create a system prompt that incorporates personality dimensions
     personality_description = ", ".join([f"{trait}: {level}" for trait, level in personality_traits.items()])
     system_prompt = f"You are Nyra, a chatbot with the following personality traits: {personality_description}. Respond accordingly."
-
-    print(personality_description)
-
-    response = openai.chat.completions.create(
+    response = openai.ChatCompletion.create(
         model="gpt-4o-mini",
         messages=[
             {"role": "system", "content": system_prompt},
@@ -253,44 +195,28 @@ def generate_response(prompt, personality_traits):
         stop=None,
         temperature=0.7,
     )
-    
     return response.choices[0].message.content
 
-
-def chat_with_nyra(user_id="default_user"):
-    # Load user profile and memory segments
-    user_profile = load_user_profile(user_id)
+def chat_with_nyra(user_id=None):
+    user_profile, user_id = load_user_profile(user_id)
     memory = {
         "short-term": load_memory(filename="nyra_memory_short_term.json"),
         "long-term": load_memory(filename="nyra_memory_long_term.json")
     }
-    
-    print("Nyra: Hi, I'm Nyra! What can I help with?")
-    
+    print(f"Nyra: Hi, {user_profile['name']}! What can I help with today?")
     while True:
-        user_input = input("You: ")
-        
+        user_input = input(f"{user_profile['name']}: ")
         if user_input.lower() in ["exit", "quit", "bye"]:
-            print("Nyra: Goodbye! Have a great day!")
+            print(f"Nyra: Goodbye, {user_profile['name']}! Have a great day!")
             break
-        
-        # Recall relevant memories, prioritizing short-term over long-term
         memory_context = recall_relevant_memory(memory["short-term"], user_input) \
                          or recall_relevant_memory(memory["long-term"], user_input)
-        
-        # Generate response using the personality traits and memory context
         prompt = f"{memory_context} Current conversation: {user_input}"
         nyra_response = generate_response(prompt, user_profile["preferences"])
-        
         print(f"Nyra: {nyra_response}")
-        
-        # Add the interaction to the appropriate memory segment
         manage_memory(memory, {"user_input": user_input, "nyra_response": nyra_response})
-        
-        # Optionally update user profile based on the conversation
         user_profile["history"].append({"input": user_input, "response": nyra_response})
         save_user_profile(user_id, user_profile)
-
 
 # Start chatting with the enhanced Nyra
 chat_with_nyra()
